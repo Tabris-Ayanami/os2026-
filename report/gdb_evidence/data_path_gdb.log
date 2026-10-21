@@ -1,0 +1,124 @@
+Breakpoint 1 at 0x810188: file ../target/riscv/cpu_helper.c, line 1764.
+Breakpoint 2 at 0x80e969: file ../target/riscv/cpu_helper.c, line 1193.
+Breakpoint 3 at 0x77044c: file ../accel/tcg/cputlb.c, line 1653.
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/x86_64-linux-gnu/libthread_db.so.1".
+[New Thread 0x7ffff75c36c0 (LWP 55536)]
+[New Thread 0x7ffff6b7d6c0 (LWP 55537)]
+
+OpenSBI v1.7
+   ____                    _____ ____ _____
+  / __ \                  / ____|  _ \_   _|
+ | |  | |_ __   ___ _ __ | (___ | |_) || |
+ | |  | | '_ \ / _ \ '_ \ \___ \|  _ < | |
+ | |__| | |_) |  __/ | | |____) | |_) || |_
+  \____/| .__/ \___|_| |_|_____/|____/_____|
+        | |
+        |_|
+
+Platform Name               : riscv-virtio,qemu
+Platform Features           : medeleg
+Platform HART Count         : 1
+Platform IPI Device         : aclint-mswi
+Platform Timer Device       : aclint-mtimer @ 10000000Hz
+Platform Console Device     : uart8250
+Platform HSM Device         : ---
+Platform PMU Device         : ---
+Platform Reboot Device      : syscon-reboot
+Platform Shutdown Device    : syscon-poweroff
+Platform Suspend Device     : ---
+Platform CPPC Device        : ---
+Firmware Base               : 0x80000000
+Firmware Size               : 317 KB
+Firmware RW Offset          : 0x40000
+Firmware RW Size            : 61 KB
+Firmware Heap Offset        : 0x46000
+Firmware Heap Size          : 37 KB (total), 2 KB (reserved), 11 KB (used), 23 KB (free)
+Firmware Scratch Size       : 4096 B (total), 1400 B (used), 2696 B (free)
+Runtime SBI Version         : 3.0
+Standard SBI Extensions     : time,rfnc,ipi,base,hsm,srst,pmu,dbcn,fwft,legacy,dbtr,sse
+Experimental SBI Extensions : none
+
+Domain0 Name                : root
+Domain0 Boot HART           : 0
+Domain0 HARTs               : 0*
+Domain0 Region00            : 0x0000000000100000-0x0000000000100fff M: (I,R,W) S/U: (R,W)
+Domain0 Region01            : 0x0000000010000000-0x0000000010000fff M: (I,R,W) S/U: (R,W)
+Domain0 Region02            : 0x0000000002000000-0x000000000200ffff M: (I,R,W) S/U: ()
+Domain0 Region03            : 0x0000000080040000-0x000000008004ffff M: (R,W) S/U: ()
+Domain0 Region04            : 0x0000000080000000-0x000000008003ffff M: (R,X) S/U: ()
+Domain0 Region05            : 0x000000000c400000-0x000000000c5fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region06            : 0x000000000c000000-0x000000000c3fffff M: (I,R,W) S/U: (R,W)
+Domain0 Region07            : 0x0000000000000000-0xffffffffffffffff M: () S/U: (R,W,X)
+Domain0 Next Address        : 0x0000000080200000
+Domain0 Next Arg1           : 0x0000000087e00000
+Domain0 Next Mode           : S-mode
+Domain0 SysReset            : yes
+Domain0 SysSuspend          : yes
+
+Boot HART ID                : 0
+Boot HART Domain            : root
+Boot HART Priv Version      : v1.12
+Boot HART Base ISA          : rv64imafdch
+Boot HART ISA Extensions    : sstc,zicntr,zihpm,zicboz,zicbom,sdtrig,svadu
+Boot HART PMP Count         : 16
+Boot HART PMP Granularity   : 2 bits
+Boot HART PMP Address Bits  : 54
+Boot HART MHPM Info         : 16 (0x0007fff8)
+Boot HART Debug Triggers    : 2 triggers
+Boot HART MIDELEG           : 0x0000000000001666
+Boot HART MEDELEG           : 0x0000000000f4b509
+[Switching to Thread 0x7ffff6b7d6c0 (LWP 55537)]
+  [data tlb] addr=0xffffffffc0208018 entry=0xffffffffffffffff hit=0
+
+=== DATA TLB MISS: addr=0xffffffffc0208018 access_type=1 mmu_idx=1 ===
+#0  riscv_cpu_tlb_fill (cs=0x555556ab60d0, address=18446744072637939736, size=1, access_type=MMU_DATA_STORE, mmu_idx=1, probe=false, retaddr=140735179419290) at ../target/riscv/cpu_helper.c:1764
+#1  0x0000555555cc1353 in tlb_fill_align (cpu=0x555556ab60d0, addr=18446744072637939736, type=MMU_DATA_STORE, mmu_idx=1, memop=2784, size=1, probe=false, ra=140735179419290) at ../accel/tcg/cputlb.c:1255
+#2  0x0000555555cc44f9 in mmu_lookup1 (cpu=0x555556ab60d0, data=0x7ffff6b7c0d0, memop=2784, mmu_idx=1, access_type=MMU_DATA_STORE, ra=140735179419290) at ../accel/tcg/cputlb.c:1656
+#3  0x0000555555cc482c in mmu_lookup (cpu=0x555556ab60d0, addr=18446744072637939736, oi=89089, ra=140735179419290, type=MMU_DATA_STORE, l=0x7ffff6b7c0d0) at ../accel/tcg/cputlb.c:1748
+#4  0x0000555555cc754d in do_st1_mmu (cpu=0x555556ab60d0, addr=18446744072637939736, val=0 '\000', oi=89089, ra=140735179419290) at ../accel/tcg/cputlb.c:2736
+#5  0x0000555555cc81e6 in helper_stb_mmu (env=0x555556ab9bd0, addr=18446744072637939736, val=0, oi=89089, ra=140735179419290) at ../accel/tcg/ldst_common.c.inc:86
+#6  0x00007fff76606f17 in code_gen_buffer ()
+#7  0x0000555555cab710 in cpu_tb_exec (cpu=0x555556ab60d0, itb=0x7fffb33dbd80, tb_exit=0x7ffff6b7c720) at ../accel/tcg/cpu-exec.c:439
+=== DATA get_physical_address(addr=0xffffffffc0208018) satp=0x8000000000080207 access_type=1 ===
+DTB Init
+HartID: 0
+DTB Address: 0x87e00000
+Physical Memory from DTB:
+  Base: 0x0000000080000000
+  Size: 0x0000000008000000 (128 MB)
+  End:  0x0000000087ffffff
+DTB init completed
+(THU.CST) os is loading ...
+Special kernel symbols:
+  entry  0xffffffffc02000d8 (virtual)
+  etext  0xffffffffc0202e38 (virtual)
+  edata  0xffffffffc0208018 (virtual)
+  end    0xffffffffc021035c (virtual)
+Kernel executable memory footprint: 65KB
+memory management: best_fit_pmm_manager
+kernel manages physical memory: [0x0000000080000000, 0x0000000088000000), 128 MB
+  [data tlb] addr=0xffffffffc0208028 entry=0xffffffffc0348000 hit=0
+check_alloc_page() succeeded!
+satp virtual address: 0xffffffffc0207000
+satp physical address: 0x0000000080207000
+========== Buddy System Test ==========
+[Buddy Test 1] init and decomposition: PASS
+[Buddy Test 2] alloc/free/full coalescing: PASS
+[Buddy Test 3] non power-of-two request: PASS
+[Buddy Test 4] exhaustion and recovery: PASS
+[Buddy Test 5] fragmentation and buddy merging: PASS
+[Buddy Test 6] block alignment: PASS
+[Buddy Test 7] oversized request: PASS
+[Buddy Test 8] alloc/free stress: PASS
+========== Buddy System Test PASSED ==========
+========== SLUB Test ==========
+[SLUB Test 1] single alloc/free: PASS
+[SLUB Test 2] full slab and second slab: PASS
+[SLUB Test 3] object reuse inside a slab: PASS
+[SLUB Test 4] all size classes and alignment: PASS
+[SLUB Test 5] class independence: PASS
+[SLUB Test 6] invalid requests: PASS
+[SLUB Test 7] free ordering: PASS
+[SLUB Test 8] mixed-size stress: PASS
+========== SLUB Test PASSED ==========

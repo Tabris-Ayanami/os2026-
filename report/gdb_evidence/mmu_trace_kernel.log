@@ -1,0 +1,9 @@
+riscv_cpu_tlb_fill ad 80000000 rw 2 mmu_idx 3
+riscv_cpu_tlb_fill address=80000000 ret 0 physical 0000000080000000 prot 7
+...
+riscv_cpu_tlb_fill ad ffffffffc02000d8 rw 2 mmu_idx 1
+riscv_cpu_tlb_fill address=ffffffffc02000d8 ret 0 physical 00000000802000d8 prot 7
+riscv_cpu_tlb_fill ad ffffffffc0208018 rw 1 mmu_idx 1
+riscv_cpu_tlb_fill address=ffffffffc0208018 ret 0 physical 0000000080208018 prot 7
+riscv_cpu_tlb_fill ad ffffffffc7e00000 rw 0 mmu_idx 1
+riscv_cpu_tlb_fill address=ffffffffc7e00000 ret 0 physical 0000000087e00000 prot 7
