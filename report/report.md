@@ -7,6 +7,7 @@
 | **实验名称** | Lab2：物理内存和页表 |
 | **小组成员** | 2414006-王璞、2412953-裴家昌、2414107-李易洲 |
 | **完成日期** | 2026-10-21 |
+| **修订日期** | 2026-10-23 |
 
 ### 小组分工
 
@@ -176,13 +177,15 @@ static void page_init(void);   // kern/mm/pmm.c
 
 【要求】
 1. 设置 va_pa_offset = PHYSICAL_MEMORY_OFFSET；
-2. 读取 mem_begin/mem_size；任一为 0 时 panic 终止初始化；
+2. 读取 mem_begin/mem_size；若基址不等于框架固定的 DRAM_BASE、大小为 0
+   或末地址溢出，则 panic 终止初始化；写描述符前确认其存储空间能放下；
 3. 输出探测到的物理内存范围；
-4. npage = PPN(mem_end)；描述符数组覆盖 [nbase, npage)，需要
+4. managed_end = ROUNDDOWN(MIN(mem_end, PHYSICAL_MEMORY_END), PGSIZE)，
+   npage = PPN(managed_end)；描述符数组覆盖 [nbase, npage)，需要
    npage - nbase 个 struct Page；
 5. pages = ROUNDUP(end, PGSIZE)；先把所有描述符 SetPageReserved；
 6. 计算描述符数组之后的物理地址并按页向上对齐，得到 freemem；
-   内存末尾按页向下对齐，得到 free_end；
+   使用裁剪并按页向下对齐后的 managed_end 作为 free_end；
 7. 仅当 freemem < free_end 时调用
    init_memmap(pa2page(freemem), (free_end - freemem) / PGSIZE)；
 8. 不要修改其他框架文件。
@@ -243,29 +246,53 @@ static void
 page_init(void) {
     extern char end[];
 
+    // virtual<->physical offset, required by PADDR/KADDR
     va_pa_offset = PHYSICAL_MEMORY_OFFSET;
 
     uint64_t mem_begin = get_memory_base();
     uint64_t mem_size = get_memory_size();
-    if (mem_begin == 0 || mem_size == 0) {
+    uint64_t mem_end = mem_begin + mem_size;
+    // This kernel's Page indexing and direct map assume DRAM_BASE.
+    if (mem_begin != DRAM_BASE || mem_size == 0 || mem_end <= mem_begin) {
         panic("page_init: invalid physical memory info from DTB\n");
     }
-    uint64_t mem_end = mem_begin + mem_size;
 
-    cprintf("kernel manages physical memory: [0x%016lx, 0x%016lx), %ld MB\n",
+    cprintf("detected physical memory: [0x%016lx, 0x%016lx), %ld MB\n",
             mem_begin, mem_end, mem_size / (1024 * 1024));
 
-    npage = PPN(mem_end);
+    uint64_t managed_end = mem_end < PHYSICAL_MEMORY_END
+                               ? mem_end : PHYSICAL_MEMORY_END;
+    managed_end = ROUNDDOWN(managed_end, PGSIZE);
+    if (managed_end <= mem_begin) {
+        panic("page_init: no complete physical pages in the managed range\n");
+    }
+    cprintf("kernel manages physical memory: [0x%016lx, 0x%016lx), %ld MB\n",
+            mem_begin, managed_end, (managed_end - mem_begin) / (1024 * 1024));
+
+    // the page descriptor array covers physical page numbers [nbase, npage)
+    npage = PPN(managed_end);
     size_t page_count = npage - nbase;
     pages = (struct Page *)ROUNDUP((void *)end, PGSIZE);
 
+    // Validate the descriptor storage before writing into it.
+    uintptr_t pages_pa = PADDR(pages);
+    if (pages_pa >= managed_end ||
+        page_count > (managed_end - pages_pa) / sizeof(struct Page)) {
+        panic("page_init: insufficient memory for Page descriptors\n");
+    }
+
+    // reserve every page first; the free region is released below
     for (size_t i = 0; i < page_count; i++) {
+        pages[i].flags = 0;
         SetPageReserved(pages + i);
     }
 
+    // free memory starts right after the descriptor array (page aligned),
+    // and ends at the capped managed memory end (page aligned down); only
+    // hand over the pages if at least one complete page is left
     uintptr_t freemem =
-        ROUNDUP(PADDR((uintptr_t)pages + sizeof(struct Page) * page_count), PGSIZE);
-    uintptr_t free_end = ROUNDDOWN(mem_end, PGSIZE);
+        ROUNDUP(pages_pa + sizeof(struct Page) * page_count, PGSIZE);
+    uintptr_t free_end = managed_end;
     if (freemem < free_end) {
         init_memmap(pa2page(freemem), (free_end - freemem) / PGSIZE);
     }
@@ -282,7 +309,7 @@ page_init(void) {
    ...     ── 再次按页对齐
  freemem   ── 可分配的连续物理页
    ...
-mem_end    ── DTB 报告的内存末尾（不足一页的部分不登记）
+managed_end ── DTB 末尾与框架上界取较小值，再按页向下对齐
 ```
 
 #### 运行结果
@@ -499,8 +526,8 @@ while ((le = list_next(le)) != &free_list) {
 其余步骤（摘链、拆分剩余块、更新 `nr_free`、清除 `PageProperty`）与
 First-Fit 相同；释放时的前后合并逻辑也与 First-Fit 一致。
 
-`best_fit_pmm_manager` 在 `best_fit_pmm.c:268` 注册，`init_pmm_manager()`
-（`pmm.c:37`）把当前管理器切换为它。
+`best_fit_pmm_manager` 在 `best_fit_pmm.c` 文件末尾注册，`pmm.c` 中的
+`init_pmm_manager()` 默认选择它。
 
 #### 你的 Best-Fit 算法是否有进一步的改进空间？
 
@@ -695,7 +722,7 @@ Buddy System（伙伴系统）物理内存分配管理器，并接入内核。
 | Test 5 | 碎片化与“只合并空闲等大伙伴” | 释放部分块后最大块必须停在区域一半，能检出错误合并 |
 | Test 6 | 各阶块的对齐 | 伙伴下标 `I ^ S` 的正确性依赖对齐 |
 | Test 7 | 超大请求与剩余不足 | 验证失败路径不改变空闲状态 |
-| Test 8 | 100 轮混合分配/释放 | 检出链表指针和计数漂移 |
+| Test 8 | 100 轮单页分配后立即释放 | 检出链表指针和计数漂移 |
 
 运行结果：
 
@@ -802,7 +829,7 @@ void  slub_test(void);
 - 两层架构：slab 通过 alloc_pages(1)/free_pages(page,1) 申请和归还页；
 - size class：16/32/64/128/256/512/1024/2048 字节，请求向上取整；
 - 每页切分为固定大小对象，空闲对象用对象内存中的单链表串联；
-- 空闲对象数量归零的 slab 会立即归还页面；
+- 已分配对象数 inuse 归零的 slab 会立即归还页面；
 - slub_alloc(0) 和超过 2048 字节的请求返回 NULL；slub_free(NULL) 安全忽略。
 
 【测试约束】
@@ -906,12 +933,13 @@ void  slub_test(void);
 **负责人：** 2414107-李易洲
 
 完整日志和 gdb 脚本见 `gdb_evidence/`，详细笔记见 `gdb_notes.md`。
+本节日志和截图保留 2026-10-21 的历史地址；修订后请从当前 ELF 提取地址。
 
 #### 环境与双 GDB 流程
 
 本机 QEMU 是 10.2.1，手册示例是 4.1.1。我编译了与本机一致的调试版 QEMU
 （`buildtype=debug`、`optimization=0`、带 debug_info），并下载 4.1.1 源码
-对照，确认两版的翻译调用链一致。
+对照。两版逻辑相近，但中间函数有变化；已在 `gdb_notes.md` 补充版本位置对照。
 
 由于本机 `ptrace_scope=1` 限制非子进程 attach，主机 gdb 直接启动 QEMU：
 
@@ -1090,7 +1118,8 @@ Sv39 下 `levels=3`，循环最多三次：
 
 三次都没有合法叶子则返回 `TRANSLATE_FAIL`，调用方产生 page fault。
 
-本次实测中，lab2 的启动页表只有索引 511 一项，且 R/W/X 全为 1，所以它是
+当前启动页表有索引 2（恒等映射）和索引 511（高地址映射）两项。
+本次高地址翻译命中索引 511，且其 R/W/X 全为 1，所以它是
 **1GiB 大页叶子**。因此循环只执行了 `i=0` 一次就 `goto leaf`，`levels=3`
 但没有走完三层。这也解释了 `ptshift=18` 以及物理地址低 18 位直接从 `vpn`
 补齐的原因。如果改成 4KiB 页表，同一段代码会完整执行三次循环。
@@ -1121,8 +1150,8 @@ PTE 被修改时，会从根页表重新遍历。
 1. **Bare 模式也走 TLB 填充**：satp=0 时第一次取指仍触发
    `riscv_cpu_tlb_fill`；
 2. **PTE=0x200000cf 的 U/G 位**：`0xcf = V|R|W|X|A|D`，**U=0、G=0**。
-   entry.S 注释写“VRWXAD 均为 1”并不准确；S 模式访问时若 U=1 且 SUM=0，
-   会直接翻译失败，所以 0xcf 才是正确的；
+   entry.S 注释写“VRWXAD 均为 1”是正确的，未包含 U/G。
+   S 模式访问用户页的数据权限还受 SUM 影响，且不能从 U=1 的页面取指；
 3. **启动页表是 1GiB 大页**：`levels=3` 但只执行一次循环，`ptshift=18`；
 4. **TLB 表项是 4KiB 粒度**：虽然是 1GiB 映射，`tlb_size` 仍来自 PMP 粒度
    （0x1000），每个 4KiB 页第一次访问都各自填一次；
@@ -1222,7 +1251,7 @@ PTE 被修改时，会从根页表重新遍历。
 | `nbase` / `npage` / `PPN` | 物理地址空间、页帧号 | 实验中 DRAM 从 `0x80000000` 开始，所以 `nbase=0x80000`；描述符数组覆盖 `[nbase, npage)` |
 | `free_area_t` + 空闲链表 | 空闲空间管理（free list） | 按地址有序的双向链表，头页记录块大小 |
 | First-Fit / Best-Fit | 连续内存分配算法 | 两者都维护连续空闲块；First-Fit 取第一个满足的块，Best-Fit 取最小的满足块 |
-| 拆分与前后合并 | 内部碎片与外部碎片 | 拆分会产生内部碎片；合并减少外部碎片；Best-Fit 容易留下小碎片 |
+| 拆分与前后合并 | 内部碎片与外部碎片 | 拆分剩余部分仍是空闲块；合并减少外部碎片；页粒度、Buddy 幂次和 SLUB 大小类取整可能造成内部浪费 |
 | Buddy System | 伙伴系统（Linux 早期页分配器） | 只管理 2 的幂次块，利用 `I ^ S` 找伙伴，合并和拆分的代价可预测 |
 | SLUB | slab/SLUB 分配器 | 两层结构：页级分配 + 对象级缓存；本实验做了简化，没有 per-CPU cache 和着色 |
 | `va_pa_offset` / `PADDR` | 直接映射（direct map） | 内核虚拟地址与物理地址之间是固定偏移；Lab2 的启动页表用 1GiB 大页覆盖 DRAM |
@@ -1337,25 +1366,51 @@ make grade
 #   Total Score: 20/20
 
 # 3. Buddy 作为真实管理器（可选）
-#    在 Makefile 的 KCFLAGS 中加入 -D USE_BUDDY_PMM 后重新构建
+make clean
+make DEFS=-DUSE_BUDDY_PMM
+make qemu
 ```
 
 ### 附录 D：分支任务复现
 
-```bash
-# 在 lab2 分支根目录下
-cd code
+完整命令见 [调试笔记的复现章节](./gdb_notes.md#复现2026-10-23-修订)。
+其中通过 `riscv64-unknown-elf-nm` 从本次 `bin/kernel` 提取 `kern_init` 与 `edata`，
+传入 `$kernel_va` / `$data_va`；QEMU 源码位置与版本也必须匹配。
+不要把历史日志中的 `0xffffffffc02000d8` 当成新构建的固定地址。
 
-# 主机 gdb（终端 1）
-gdb -q -batch -x ../report/gdb_evidence/host_translation.gdb --args \
-  /home/xisaka/qemu-build/src/qemu-10.2.1/build/qemu-system-riscv64 \
-  -machine virt -nographic -bios default -kernel bin/ucore.img -s -S
+### 附录 E：2026-10-23 修复与验证
 
-# guest gdb（终端 2）
-riscv64-unknown-elf-gdb -q -ex "file bin/kernel" \
-  -ex "set pagination off" -ex "target remote localhost:1234" -ex "continue"
+本次核对正式指导书后修复了以下问题：
 
-# 纯日志方式
-qemu-system-riscv64 -machine virt -nographic -bios default \
-  -kernel bin/ucore.img -d mmu -D mmu.log
-```
+1. First-Fit / Best-Fit 尾插后缺少退出，可能把新节点再次插入自身并破坏链表。
+   两处管理函数都在尾插后立即 `break`；Best-Fit 原始 `basic_check` / `best_fit_check`
+   保持不变。
+2. `page_init` 把探测范围限制到 `PHYSICAL_MEMORY_END`，并在写描述符之前检查存储空间；
+   基址不匹配、空范围或末地址溢出会终止初始化。输出同时区分探测和管理范围。
+3. `slub_free` 在尚未初始化时安全返回；现有自检增加初始化前/后的未知指针以及
+   对象内不对齐指针，检查合法对象的数据和页数没有被错误释放。
+4. 评分脚本等待最终测试标记、panic、进程退出或最长 30 秒超时，并在结束时回收
+   QEMU；原有评分断言未修改。`.gitattributes` 固定文本 LF，避免 Windows 检出
+   产生 shell 的 CRLF 语法错误。
+5. 调试脚本改用当前内核地址变量和相对源码位置，文档补充 QEMU 4.1.1 与 10.2.1
+   的函数对照，并修正页表项数、PTE 位、碎片以及测试覆盖描述。
+
+原始评分测试以默认 128 MiB 配置为准：`test_lab2.c` 按 DTB 原始末地址检查 npage，
+因此它在大于框架上界的 RAM 配置下与裁剪要求不同。本次保留原始测试，额外用
+独立验证副本检查 32/128/256 MiB 的管理范围。临时复现脚本、验证副本与中间日志
+在验证完成后清理；正式自检、原始历史证据和本报告保留。
+
+验证环境为 WSL Ubuntu 22.04、RISC-V GCC 15.1.0。除 32 MiB 用例使用 QEMU
+7.0.0 外，其余运行验证均使用课程环境 QEMU 4.1.1 / OpenSBI 0.4。
+本机 4.1.1 的旧固件在 32 MiB 下未进入内核，因此该容量改用 7.0.0 验证。
+
+| 验证项 | 结果 |
+|---|---|
+| 默认 Best-Fit 与真实 Buddy 管理器构建 | 均通过原有 `-Wall -Werror` 编译 |
+| 默认 128 MiB 原评分 `make grade` | Page Init、Best-Fit 均 OK，20/20 |
+| Best-Fit 管理范围 | 32/128/256 MiB 均通过；256 MiB 的管理末地址为 `0x88000000` |
+| First-Fit / Best-Fit 尾插回归 | 非相邻区域初始化链表正确；相邻空闲页可重新分配为连续块；三次单页分配地址互异；页数恢复 |
+| 默认 Best-Fit、替换为 First-Fit、真实 Buddy 下的扩展自检 | 每种配置 Buddy 8/8、SLUB 8/8 均通过 |
+| SLUB 错误路径 | 初始化前释放、未知指针、对象内不对齐指针均安全，合法对象内容与页数保持正确 |
+| 禁止修改的测试与历史证据 | 两个 Best-Fit 测试函数与官方源代码一致；评分测试及注入器未改；历史 GDB 日志逐字节保留 |
+| 调试复现材料 | 两份 GDB 脚本命令解析、shell 命令语法检查通过；未重新执行 QEMU 10.2.1 主机双 GDB 会话 |

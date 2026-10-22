@@ -1,5 +1,8 @@
 # Lab2 提示词汇总（四段式）
 
+2026-10-23 已根据复核结果修订以下规格：补充管理上界、尾插退出和 SLUB 初始化前的错误路径。
+原始开发过程及本次修改原因见 `report.md`。
+
 本实验的模块划分如下：
 
 | 编号 | 模块 | 涉及文件 | 负责人 |
@@ -106,7 +109,8 @@ static void page_init(void);
 
 **Post-Condition**：
 - va_pa_offset == PHYSICAL_MEMORY_OFFSET；
-- npage == PPN(mem_begin + mem_size)；
+- managed_end == ROUNDDOWN(MIN(mem_begin + mem_size, PHYSICAL_MEMORY_END), PGSIZE)；
+- npage == PPN(managed_end)；
 - pages 指向 end 之后按页对齐的 Page 数组，数组覆盖物理页号 [nbase, npage)，
   共 npage - nbase 项；
 - OpenSBI、内核镜像、Page 描述符数组所在页均为 PageReserved；
@@ -114,32 +118,33 @@ static void page_init(void);
 - 串口输出探测到的物理内存范围。
 
 **Case 1（正常情况）**：
-- 条件：mem_begin != 0 且 mem_size != 0，并且描述符数组之后至少有一个完整页。
-- 行为：设置 va_pa_offset；计算 mem_end；令 npage = PPN(mem_end)；在
+- 条件：mem_begin == DRAM_BASE、mem_size != 0、末地址未溢出，并且描述符数组之后至少有一个完整页。
+- 行为：设置 va_pa_offset；计算并校验 mem_end，裁剪并按页对齐为 managed_end；令 npage = PPN(managed_end)；在
   ROUNDUP(end, PGSIZE) 处建立 (npage - nbase) 个 Page 描述符并全部标记为
   PageReserved；计算
-  freemem = ROUNDUP(PADDR(pages + (npage - nbase) * sizeof(struct Page)), PGSIZE)；
-  free_end = ROUNDDOWN(mem_end, PGSIZE)；调用
+  freemem = ROUNDUP(PADDR((uintptr_t)pages) + (npage - nbase) * sizeof(struct Page), PGSIZE)；
+  free_end = managed_end；调用
   init_memmap(pa2page(freemem), (free_end - freemem) / PGSIZE)。
 - 结果：空闲页数量等于 (free_end - freemem) / PGSIZE，且全部位于描述符数组之后。
 
 **Case 2（DTB 信息无效）**：
-- 条件：mem_begin == 0 或 mem_size == 0。
+- 条件：mem_begin != DRAM_BASE、mem_size == 0 或 mem_begin + mem_size 溢出。
 - 行为：调用 panic() 终止初始化，不设置 npage/pages，也不调用任何分配器接口。
 - 结果：系统不会带着无效的物理内存信息继续运行。
 
-**Case 3（没有完整空闲页）**：
+**Case 3（描述符能放下，但没有完整空闲页）**：
 - 条件：freemem >= free_end。
 - 行为：不调用 init_memmap()，page_init() 正常返回。
 - 结果：当前 pmm_manager 的空闲页数为 0，不会把不完整的尾部页面登记为空闲。
 
 **Case 4（内存末尾不对齐）**：
 - 条件：mem_end 不是 PGSIZE 的整数倍。
-- 行为：free_end = ROUNDDOWN(mem_end, PGSIZE)，不足一页的尾部不登记。
+- 行为：free_end = managed_end，不足一页的尾部不登记。
 - 结果：所有交给分配器的页面都是完整页，并且都位于 [mem_begin, mem_end) 内。
 
 **Requirements**：
 - 必须区分虚拟地址、物理地址、物理页号和 Page 描述符地址；
+- 写入描述符前必须检查数组能完整放进 managed_end 以内，放不下则 panic；
 - 不得把 OpenSBI、内核镜像或描述符数组占用的页登记为空闲；
 - 不得修改框架头文件和已有测试函数；
 - 代码必须通过 -Wall -Werror 编译。
@@ -312,7 +317,7 @@ base + base->property == q 时，把 q->property 加到 base->property，
 **Post-Condition**：返回当前空闲页总数 nr_free。
 
 **Requirements**：
-- 空闲链表必须始终按物理地址递增；
+- 空闲链表必须始终按物理地址递增；尾部插入后必须退出循环，禁止再次插入同一节点；
 - 不得修改 basic_check() / best_fit_check()；
 - 代码必须通过 -Wall -Werror 编译；
 - 最后定义 best_fit_pmm_manager，并在 init_pmm_manager() 中切换。
@@ -775,7 +780,7 @@ void slub_test(void);
 最后逐字节校验所有对象，确认不同 class 的对象不重叠。
 
 **Case 6（非法请求）**：alloc(0)、alloc(2049)、alloc(4096) 返回 NULL；
-free(NULL) 安全；free 未知指针安全；页数不变。
+free(NULL) 安全；初始化前及初始化后的未知指针安全；对象内未对齐指针不会被释放；页数和合法对象内容不变。
 
 **Case 7（释放顺序）**：同一 class 分配 8 个对象，分别按 FIFO 和 LIFO 释放；
 页数都能恢复。

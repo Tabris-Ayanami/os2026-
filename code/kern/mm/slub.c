@@ -173,12 +173,12 @@ slub_alloc(size_t size) {
 /* slab_lookup - find the slab that owns `ptr`, or NULL if it is unknown */
 static struct slub_slab *
 slab_lookup(void *ptr) {
-    char *p = (char *)ptr;
+    uintptr_t p = (uintptr_t)ptr;
     for (size_t i = 0; i < SLUB_NCLASSES; i++) {
         list_entry_t *le = &slub_caches[i].slabs;
         while ((le = list_next(le)) != &slub_caches[i].slabs) {
             struct slub_slab *s = le2slab(le, link);
-            if (p >= s->base && p < s->base + PGSIZE) {
+            if (p >= (uintptr_t)s->base && p < (uintptr_t)s->base + PGSIZE) {
                 return s;
             }
         }
@@ -188,7 +188,7 @@ slab_lookup(void *ptr) {
 
 void
 slub_free(void *ptr) {
-    if (ptr == NULL) {
+    if (ptr == NULL || !slub_initialized) {
         return;
     }
     struct slub_slab *slab = slab_lookup(ptr);
@@ -228,6 +228,12 @@ slub_test_reset(void) {
 void
 slub_test(void) {
     cprintf("========== SLUB Test ==========\n");
+
+    // Exercise the lazy-init error path before the first allocation.
+    size_t startup_free = nr_free_pages();
+    slub_free(NULL);
+    slub_free(&slub_initialized);
+    assert(nr_free_pages() == startup_free);
 
     /* 1. single small object: rounded up to the smallest class, then freed */
     slub_test_reset();
@@ -335,6 +341,19 @@ slub_test(void) {
     assert(slub_alloc(2049) == NULL);
     assert(slub_alloc(4096) == NULL);
     slub_free(NULL);                          // must be harmless
+    slub_free(&slub_initialized);             // not owned by any slab
+    void *valid = slub_alloc(64);
+    assert(valid != NULL);
+    memset(valid, 0x5a, 64);
+    slub_free((char *)valid + 1);             // not an object boundary
+    assert(nr_free_pages() == before - 1);
+    for (size_t i = 0; i < 64; i++) {
+        assert(((unsigned char *)valid)[i] == 0x5a);
+    }
+    void *other = slub_alloc(64);
+    assert(other != NULL && other != valid);
+    slub_free(other);
+    slub_free(valid);
     assert(nr_free_pages() == before);
     cprintf("[SLUB Test 6] invalid requests: PASS\n");
 

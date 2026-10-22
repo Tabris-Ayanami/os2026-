@@ -23,7 +23,7 @@ make_print() {
     echo `$make $makeopts print-$1`
 }
 
-echo `$make`
+$make $makeopts > "$out" 2> "$err" || exit 1
 
 ## command tools
 awk='awk'
@@ -49,6 +49,17 @@ else
 fi
 
 default_timeout=30
+pid=
+cleanup() {
+    if [ -n "$pid" ]; then
+        kill "$pid" 2>/dev/null || :
+        wait "$pid" 2>/dev/null || :
+        pid=
+    fi
+}
+trap cleanup 0
+trap 'exit 130' INT
+trap 'exit 143' TERM
 pts=5
 part=0
 part_pos=0
@@ -125,15 +136,15 @@ run_qemu() {
     fi
 
     t0=$(get_time)
+    : > "$qemu_out"
     (
         ulimit -t $timeout
         exec $qemu -nographic $qemuopts -serial file:$qemu_out -monitor null -no-reboot $qemuextra
     ) > $out 2> $err &
     pid=$!
 
-    sleep 1
-
     if [ -n "$brkfun" ]; then
+        sleep 1
         brkaddr=`$grep " $brkfun\$" $sym_table | $sed -e's/ .*$//g'`
         brkaddr_phys=`echo $brkaddr | sed "s/^c0/00/g"`
         (
@@ -145,7 +156,26 @@ run_qemu() {
             echo "continue"
         ) > $gdb_in
         $gdb -batch -nx -x $gdb_in > /dev/null 2>&1
-        kill $pid > /dev/null 2>&1
+        cleanup
+    else
+        # A nonempty serial log may contain only the OpenSBI banner.
+        # Wait for the final grading test, a panic, process exit, or timeout.
+        elapsed=0
+        while [ "$elapsed" -lt "$timeout" ]; do
+            if grep -Fq -e '[Test 2] Best-Fit: PASS' \
+                         -e '[Test 2] Best-Fit: FAIL' "$qemu_out" ||
+               grep -q 'panic' "$qemu_out"; then
+                break
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+        if [ "$elapsed" -ge "$timeout" ]; then
+            echo "Timed out waiting for grading output after ${timeout}s" >&2
+        fi
     fi
 }
 

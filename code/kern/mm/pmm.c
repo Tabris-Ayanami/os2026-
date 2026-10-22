@@ -81,30 +81,48 @@ page_init(void) {
 
     uint64_t mem_begin = get_memory_base();
     uint64_t mem_size = get_memory_size();
-    if (mem_begin == 0 || mem_size == 0) {
+    uint64_t mem_end = mem_begin + mem_size;
+    // This kernel's Page indexing and direct map assume DRAM_BASE.
+    if (mem_begin != DRAM_BASE || mem_size == 0 || mem_end <= mem_begin) {
         panic("page_init: invalid physical memory info from DTB\n");
     }
-    uint64_t mem_end = mem_begin + mem_size;
 
-    cprintf("kernel manages physical memory: [0x%016lx, 0x%016lx), %ld MB\n",
+    cprintf("detected physical memory: [0x%016lx, 0x%016lx), %ld MB\n",
             mem_begin, mem_end, mem_size / (1024 * 1024));
 
+    uint64_t managed_end = mem_end < PHYSICAL_MEMORY_END
+                               ? mem_end : PHYSICAL_MEMORY_END;
+    managed_end = ROUNDDOWN(managed_end, PGSIZE);
+    if (managed_end <= mem_begin) {
+        panic("page_init: no complete physical pages in the managed range\n");
+    }
+    cprintf("kernel manages physical memory: [0x%016lx, 0x%016lx), %ld MB\n",
+            mem_begin, managed_end, (managed_end - mem_begin) / (1024 * 1024));
+
     // the page descriptor array covers physical page numbers [nbase, npage)
-    npage = PPN(mem_end);
+    npage = PPN(managed_end);
     size_t page_count = npage - nbase;
     pages = (struct Page *)ROUNDUP((void *)end, PGSIZE);
 
+    // Validate the descriptor storage before writing into it.
+    uintptr_t pages_pa = PADDR(pages);
+    if (pages_pa >= managed_end ||
+        page_count > (managed_end - pages_pa) / sizeof(struct Page)) {
+        panic("page_init: insufficient memory for Page descriptors\n");
+    }
+
     // reserve every page first; the free region is released below
     for (size_t i = 0; i < page_count; i++) {
+        pages[i].flags = 0;
         SetPageReserved(pages + i);
     }
 
     // free memory starts right after the descriptor array (page aligned),
-    // and ends at the DTB-reported memory end (page aligned down); only
+    // and ends at the capped managed memory end (page aligned down); only
     // hand over the pages if at least one complete page is left
     uintptr_t freemem =
-        ROUNDUP(PADDR((uintptr_t)pages + sizeof(struct Page) * page_count), PGSIZE);
-    uintptr_t free_end = ROUNDDOWN(mem_end, PGSIZE);
+        ROUNDUP(pages_pa + sizeof(struct Page) * page_count, PGSIZE);
+    uintptr_t free_end = managed_end;
     if (freemem < free_end) {
         init_memmap(pa2page(freemem), (free_end - freemem) / PGSIZE);
     }

@@ -1,10 +1,13 @@
+# QEMU 10.2.1 source lines only. Set $kernel_va from the current bin/kernel
+# before sourcing; see ../gdb_notes.md for commands and source-path mapping.
+set $kernel_page = (unsigned long long)$kernel_va & 0xfffffffffffff000
 set pagination off
 set confirm off
 set breakpoint pending on
 set $hits = 0
 
 # --- TLB miss call path (instruction fetch) ---
-break riscv_cpu_tlb_fill if address == 0x80200000 || address == 0xffffffffc02000d8
+break riscv_cpu_tlb_fill if address == 0x80200000 || address == $kernel_va
 commands
   silent
   printf "\n=== TLB MISS: address=%#lx access_type=%d mmu_idx=%d ===\n", address, access_type, mmu_idx
@@ -13,7 +16,7 @@ commands
 end
 
 # --- translation entry ---
-break get_physical_address if addr == 0x80200000 || addr == 0xffffffffc02000d8
+break get_physical_address if addr == 0x80200000 || addr == $kernel_va
 commands
   silent
   printf "\n=== get_physical_address(addr=%#lx) access_type=%d first_stage=%d ===\n", addr, access_type, first_stage
@@ -22,35 +25,35 @@ commands
 end
 
 # --- page table walk: level loop, PTE address, PTE value, leaf, final PA ---
-break /home/xisaka/qemu-build/src/qemu-10.2.1/target/riscv/cpu_helper.c:1325 if addr == 0xffffffffc02000d8
+break target/riscv/cpu_helper.c:1325 if addr == $kernel_va
 commands
   silent
   printf "  [walk] i=%d ptshift=%d levels=%d ptidxbits=%d ptesize=%d vm=%d base=%#lx\n", i, ptshift, levels, ptidxbits, ptesize, vm, base
   continue
 end
 
-break /home/xisaka/qemu-build/src/qemu-10.2.1/target/riscv/cpu_helper.c:1356 if addr == 0xffffffffc02000d8
+break target/riscv/cpu_helper.c:1356 if addr == $kernel_va
 commands
   silent
   printf "  [walk] idx=%#lx  pte_addr=base+idx*8=%#lx\n", idx, base + idx * ptesize
   continue
 end
 
-break /home/xisaka/qemu-build/src/qemu-10.2.1/target/riscv/cpu_helper.c:1373 if addr == 0xffffffffc02000d8
+break target/riscv/cpu_helper.c:1373 if addr == $kernel_va
 commands
   silent
   printf "  [walk] PTE loaded = %#lx\n", pte
   continue
 end
 
-break /home/xisaka/qemu-build/src/qemu-10.2.1/target/riscv/cpu_helper.c:1432 if addr == 0xffffffffc02000d8
+break target/riscv/cpu_helper.c:1432 if addr == $kernel_va
 commands
   silent
   printf "  [walk] leaf at level %d: ppn=%#lx ptshift=%d\n", i, ppn, ptshift
   continue
 end
 
-break /home/xisaka/qemu-build/src/qemu-10.2.1/target/riscv/cpu_helper.c:1600 if addr == 0xffffffffc02000d8
+break target/riscv/cpu_helper.c:1600 if addr == $kernel_va
 commands
   silent
   printf "  [walk] PA = ((ppn=%#lx) | (vpn & %#lx)) << 12 | off %#lx\n", ppn, ((unsigned long)1 << ptshift) - 1, addr & 0xfff
@@ -58,7 +61,7 @@ commands
 end
 
 # --- TLB entry installation ---
-break /home/xisaka/qemu-build/src/qemu-10.2.1/target/riscv/cpu_helper.c:1876 if address == 0xffffffffc02000d8
+break target/riscv/cpu_helper.c:1876 if address == $kernel_va
 commands
   silent
   printf "  [tlb] install: va=%#lx pa=%#lx prot=%d size=%#lx\n", address, pa, prot, tlb_size
@@ -66,7 +69,7 @@ commands
 end
 
 # --- TLB hit evidence: same page after the fill should not call tlb_fill ---
-break /home/xisaka/qemu-build/src/qemu-10.2.1/accel/tcg/cputlb.c:1373 if page_addr == 0xffffffffc0200000
+break accel/tcg/cputlb.c:1373 if page_addr == $kernel_page
 commands
   silent
   set $hits = $hits + 1

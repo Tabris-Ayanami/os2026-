@@ -61,7 +61,7 @@ boot_page_table_sv39:
     .zero 8 * 2
     .quad (0x80000 << 10) | 0xcf # VRWXAD
     # 0xffffffff_c0000000 map to 0x80000000 (1G)
-    # 前 511 个页表项均设置为 0 ，因此 V=0 ，意味着是空的(unmapped)
+    # 索引 3..510 保持无效；索引 2 已提供启动过渡所需的恒等映射
     .zero 8 * 508
     # 设置最后一个页表项，PPN=0x80000，标志位 VRWXAD 均为 1
     .quad (0x80000 << 10) | 0xcf # VRWXAD
